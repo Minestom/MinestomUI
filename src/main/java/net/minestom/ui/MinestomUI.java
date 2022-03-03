@@ -15,10 +15,13 @@ public final class MinestomUI {
         if (!initialized.compareAndSet(false, true)) {
             throw new IllegalStateException("MinestomUI is already initialized");
         }
+        var process = MinecraftServer.process();
+        if (process == null) {
+            throw new IllegalStateException("Minestom server must be initialized before launching the UI");
+        }
         ServerUI ui = new ServerUI();
         new Thread(() -> Application.launch(ui)).start();
 
-        var process = MinecraftServer.process();
         var scheduler = process.scheduler();
         // Retrieve up-to-date server info every tick
         scheduler.scheduleTask(() -> {
