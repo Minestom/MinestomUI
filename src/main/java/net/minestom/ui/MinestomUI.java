@@ -25,7 +25,7 @@ public final class MinestomUI {
         var scheduler = process.scheduler();
         // Retrieve up-to-date server info every tick
         scheduler.scheduleTask(() -> {
-            ui.snapshot = ServerSnapshot.update();
+            ui.snapshotReference = ServerSnapshot.update();
         }, TaskSchedule.nextTick(), TaskSchedule.nextTick());
         // Close the ui when the server is closed
         scheduler.buildShutdownTask(() -> GLFW.glfwSetWindowShouldClose(ui.getHandle(), true));
