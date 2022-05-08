@@ -13,11 +13,18 @@ import net.minestom.server.coordinate.Vec;
 import net.minestom.server.entity.Entity;
 import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.Instance;
+import net.minestom.server.instance.Section;
+import net.minestom.server.instance.palette.Palette;
+import net.minestom.server.thread.Acquirable;
 import net.minestom.server.world.DimensionType;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 
 import static imgui.ImGui.*;
 import static imgui.flag.ImGuiInputTextFlags.EnterReturnsTrue;
@@ -25,6 +32,7 @@ import static imgui.flag.ImGuiInputTextFlags.ReadOnly;
 
 final class ServerUI extends Application {
     private final ServerProcess process = MinecraftServer.process();
+    private final BlockingQueue<Runnable> queue = new LinkedBlockingQueue<>();
     
     @Override
     protected void configure(Configuration config) {
@@ -45,6 +53,17 @@ final class ServerUI extends Application {
         begin("Console");
         console();
         end();
+        
+        tick();
+    }
+    
+    public void tick() {
+        List<Runnable> tasks = new ArrayList<>();
+        queue.drainTo(tasks);
+    
+        for (Runnable task : tasks) {
+            Acquirable.of(task).sync(Runnable::run);
+        }
     }
 
     private void instance(@Nullable Instance instance) {
@@ -55,9 +74,8 @@ final class ServerUI extends Application {
         
         // Time
         ImInt time = new ImInt(Math.toIntExact(instance.getTime()));
-        if (inputInt("Time", time, 100, 1000, EnterReturnsTrue)) {
-            instance.setTime(time.get());
-        }
+        if (inputInt("Time", time, 100, 1000, EnterReturnsTrue))
+            queue.add(() -> instance.setTime(time.get()));
 
         // Dimension type
         dimensionType(instance.getDimensionType());
@@ -83,6 +101,12 @@ final class ServerUI extends Application {
             inputInt("chunkX", new ImInt(chunk.getChunkX()), 0, 0, ReadOnly);
             inputInt("chunkZ", new ImInt(chunk.getChunkZ()), 0, 0, ReadOnly);
             
+            // Sections
+            if (chunk.getSections().size() > 0 && treeNode("Sections")) {
+                chunk.getSections().forEach(this::section);
+                treePop();
+            }
+            
             // Entities
             Collection<Entity> entities = chunk.getInstance().getChunkEntities(chunk);
             if (entities.size() > 0 && treeNode("Entities")) {
@@ -99,6 +123,38 @@ final class ServerUI extends Application {
             treePop();
         }
     }
+    
+    private void section(@Nullable Section section) {
+        if (section == null) return;
+    
+        if (treeNode(section.toString())) {
+            // Block palette
+            if (treeNode("Block Palette")) {
+                final Palette palette = section.blockPalette();
+                
+                inputInt("Count", new ImInt(palette.count()), ReadOnly);
+                inputInt("Max size", new ImInt(palette.maxSize()), ReadOnly);
+                inputInt("Dimension", new ImInt(palette.dimension()), ReadOnly);
+                
+                StringBuilder builder = new StringBuilder();
+                palette.getAllPresent((x, y, z, value) -> {
+                    builder.append(x)
+                        .append(",")
+                        .append(y)
+                        .append(",")
+                        .append(z)
+                        .append(" = ")
+                        .append(value)
+                        .append("\n");
+                });
+                inputTextMultiline("Entries", new ImString(builder.toString()), ReadOnly);
+        
+                treePop();
+            }
+            
+            treePop();
+        }
+    }
 
     private void entity(@Nullable Entity entity) {
         if (entity == null) return;
@@ -107,9 +163,11 @@ final class ServerUI extends Application {
             // UUID
             ImString uuid = new ImString(entity.getUuid().toString());
             if (inputText("Uuid", uuid, EnterReturnsTrue)) {
-                try {
-                    entity.setUuid(UUID.fromString(uuid.get()));
-                } catch (Exception ignored) {}
+                queue.add(() -> {
+                    try {
+                        entity.setUuid(UUID.fromString(uuid.get()));
+                    } catch (Exception ignored) {}
+                });
             }
             
             // Position
@@ -120,15 +178,15 @@ final class ServerUI extends Application {
                 ImFloat yaw = new ImFloat(entity.getPosition().yaw());
                 ImFloat pitch = new ImFloat(entity.getPosition().pitch());
                 if (treeNode("Position")) {
-                    int changed = inputDouble("x", x, 0, 0, "%.6f", EnterReturnsTrue) ? 1 : 0;
-                    changed += inputDouble("y", y, 0, 0, "%.6f", EnterReturnsTrue) ? 1 : 0;
-                    changed += inputDouble("z", z, 0, 0, "%.6f", EnterReturnsTrue) ? 1 : 0;
-                    changed += inputFloat("yaw", yaw, 0, 0, "%.6f", EnterReturnsTrue) ? 1 : 0;
-                    changed += inputFloat("pitch", pitch, 0, 0, "%.6f", EnterReturnsTrue) ? 1 : 0;
+                    int changed = inputDouble("x", x, 1, 10, "%.6f", EnterReturnsTrue) ? 1 : 0;
+                    changed += inputDouble("y", y, 1, 10, "%.6f", EnterReturnsTrue) ? 1 : 0;
+                    changed += inputDouble("z", z, 1, 10, "%.6f", EnterReturnsTrue) ? 1 : 0;
+                    changed += inputFloat("yaw", yaw, 1, 10, "%.6f", EnterReturnsTrue) ? 1 : 0;
+                    changed += inputFloat("pitch", pitch, 1, 10, "%.6f", EnterReturnsTrue) ? 1 : 0;
     
                     if (changed > 0)
-                        entity.teleport(new Pos(x.get(), y.get(), z.get(), yaw.get(), pitch.get()));
-                    
+                        queue.add(() -> entity.teleport(new Pos(x.get(), y.get(), z.get(), yaw.get(), pitch.get())));
+                        
                     treePop();
                 }
             }
@@ -139,12 +197,12 @@ final class ServerUI extends Application {
                 ImDouble y = new ImDouble(entity.getVelocity().y());
                 ImDouble z = new ImDouble(entity.getVelocity().z());
                 if (treeNode("Velocity")) {
-                    int changed = inputDouble("x", x, 0, 0, "%.6f", EnterReturnsTrue) ? 1 : 0;
-                    changed += inputDouble("y", y, 0, 0, "%.6f", EnterReturnsTrue) ? 1 : 0;
-                    changed += inputDouble("z", z, 0, 0, "%.6f", EnterReturnsTrue) ? 1 : 0;
+                    int changed = inputDouble("x", x, 1, 10, "%.6f", EnterReturnsTrue) ? 1 : 0;
+                    changed += inputDouble("y", y, 1, 10, "%.6f", EnterReturnsTrue) ? 1 : 0;
+                    changed += inputDouble("z", z, 1, 10, "%.6f", EnterReturnsTrue) ? 1 : 0;
 
                     if (changed > 0)
-                        entity.setVelocity(new Vec(x.get(), y.get(), z.get()));
+                        queue.add(() -> entity.setVelocity(new Vec(x.get(), y.get(), z.get())));
                     
                     treePop();
                 }
@@ -206,12 +264,12 @@ final class ServerUI extends Application {
     private void console() {
         ImString command = new ImString();
         if (inputText("Command", command, EnterReturnsTrue)) {
-            process.command()
+            queue.add(() -> process.command()
                 .getDispatcher()
                 .execute(
                     process.command().getConsoleSender(),
                     command.get()
-                );
+                ));
         }
     }
     
