@@ -1,6 +1,8 @@
 package net.minestom.ui;
 
 import net.minestom.server.MinecraftServer;
+import net.minestom.server.command.CommandManager;
+import net.minestom.server.command.builder.Command;
 import net.minestom.server.coordinate.Pos;
 import net.minestom.server.entity.Entity;
 import net.minestom.server.entity.EntityType;
@@ -32,6 +34,11 @@ public class IntegrationTest {
             event.setSpawningInstance(instanceContainer);
             player.setRespawnPoint(new Pos(0, 42, 0));
         });
+    
+        CommandManager commandManager = MinecraftServer.getCommandManager();
+        commandManager.register(new Command("test") {{
+            setDefaultExecutor((sender, context) -> sender.sendMessage("TEST"));
+        }});
 
         globalEventHandler.addListener(PlayerChatEvent.class, event -> {
             final Player player = event.getPlayer();
